@@ -1,0 +1,8 @@
+{:paths
+ ["src" "resources"]
+
+ :deps
+ {com.intersystems/intersystems-jdbc {:mvn/version "3.10.3"}}
+
+ :metabase.driver/parents
+ #{:sql-jdbc}}

@@ -1,0 +1,1236 @@
+COMMAND: clojure -M:run driver-methods docs (Need to run this at the root of the metabase repo)
+
+metabase.driver
+add-columns! [driver db-id table-name column-definitions & args]
+Add columns given by `column-definitions` to a table named `table-name`. If the table doesn't exist it will throw an error.
+  `args` is an optional map with an optional key `primary-key`. The `primary-key` value is a vector of column names
+  that make up the primary key. Currently only a single primary key is supported. 
+
+adjust-schema-qualification [driver database schema]
+Adjust the given schema to either add or remove further schema qualification.
+
+   In general, the database detail property `multi-level-schema` ought to drive whether a schema gets qualified or not.
+   If it is true, schemas should be fully qualified to `catalog` or other addressable hierarchical concept. If false, they should not be.
+
+   Returns a string either of the unchanged `schema` or the adjusted value. 
+
+allowed-promotions [driver]
+Returns a mapping of which types a column can be implicitly relaxed to, based on the content of appended values.
+  In the context of uploads, this permits certain appends or replacements of an existing csv table
+  to change column types with `alter-table-columns!`.
+
+  e.g. `{:metabase.upload/int #{:metabase.upload/float}}` would allow int columns to be migrated to floats.
+  If we require a relaxation which is not allowed here, we will reject the corresponding file.
+
+  It is expected that the returned map is transitively closed.
+  If type A can be relaxed to B, and B can be relaxed to C, then A must also explicitly list C as a valid relaxation.
+  This is to avoid situations where promotions are reachable but require additional user effort,
+  such as filtering and re-uploading csv files.
+
+  e.g.
+
+  Valid (transitively closed):
+  {:metabase.upload/int #{:metabase.upload/float}
+   :metabase.upload/boolean #{:metabase.upload/int, :metabase.upload/float}}
+  Since boolean -> int and int -> float, we also include boolean -> float.
+
+  Invalid (not transitively closed):
+  {:metabase.upload/int #{:metabase.upload/float}
+   :metabase.upload/boolean #{:metabase.upload/int}}
+  This would reject a boolean -> float transition, despite boolean reaching float through int. 
+
+alter-columns! [driver db-id table-name column-definitions]
+Alter columns given by `column-definitions` to a table named `table-name`. If the table doesn't exist it will throw an error.
+  Currently, we do not currently support changing the primary key, or take any guidance on how to coerce values. 
+
+alter-table-columns! [driver db-id table-name column-definitions & opts]
+Alter columns given by `column-definitions` to a table named `table-name`. If the table doesn't exist it will throw an error.
+  Currently, we do not currently support changing the primary key.
+
+  Used to change the types of columns when appending to or replacing uploads with a new .csv that infers a different type.
+
+  `column-definitions` should be supplied as a map of column-name keyword to column type.
+  e.g. `{:my-column [:varchar 255]}`
+
+  Note: column types may be supplied as honeysql vectors (e.g. `[:varchar 255]`) or a raw string.
+  Both should be handled by implementations.
+
+  Options:
+
+  - `:old-types`: a map of the existing column definitions, e.g `{:my-column [:bigint]}`
+     Can be useful to infer an expression to convert old values to the new type
+     where the database engine does not support it natively.
+     Implementations are free to ignore this parameter if they cannot do anything with it.
+
+  Replaces `alter-columns!` that was previously used for the same purpose in versions < `0.54.0` 
+
+can-connect? [driver details]
+Check whether we can connect to a `Database` with `details-map` and perform a simple query. For example, a SQL
+  database might try running a query like `SELECT 1;`. This function should return truthy if a connection to the DB
+  can be made successfully, otherwise it should return falsey or throw an appropriate Exception. Exceptions if a
+  connection cannot be made. Throw an `ex-info` containing a truthy `::can-connect-message?` in `ex-data`
+  in order to suppress logging expected driver validation messages during setup. 
+
+column-name-length-limit [driver]
+Return the maximum number of bytes allowed in a column name, or `nil` if there is no limit. 
+
+connection-properties [driver]
+Return information about the connection properties that should be exposed to the user for databases that will use
+  this driver. This information is used to build the UI for editing a Database `details` map, and for validating it on
+  the backend. It should include things like `host`, `port`, and other driver-specific parameters. Each property must
+  conform to the [[ConnectionDetailsProperty]] schema above.
+
+  There are several definitions for common properties available in the [[metabase.driver.common]] namespace, such as
+  `default-host-details` and `default-port-details`. Prefer using these if possible.
+
+  Like `display-name`, lazy-loaded drivers should specify this in their plugin manifest; `lazy-loaded-driver` will
+  automatically create an implementation for you. 
+
+contact-info [driver]
+The contact information for the driver 
+
+create-auto-pk-with-append-csv? [driver]
+Returns true if the driver should create an auto-incrementing primary key column when appending CSV data to an existing
+  upload table. This is because we want to add auto-pk columns for drivers that supported uploads before auto-pk columns
+  were introduced by metabase#36249. It should return false if the driver supported the uploads feature in version 48 or later. 
+
+create-table! [driver database-id table-name column-definitions & args]
+Create a table named `table-name`. If the table already exists it will throw an error.
+  `args` is an optional map with an optional entry `primary-key`. The `primary-key` value is a vector of column names
+  that make up the primary key. 
+
+current-user-table-privileges [driver database & args]
+Returns the rows of data as arrays needed to populate the table_privileges table
+   with the DB connection's current user privileges.
+   The data contains the privileges that the user has on the given `database`.
+   The privileges include select, insert, update, and delete.
+
+   The rows have the following keys and value types:
+     - role            :- [:maybe :string]
+     - schema          :- [:maybe :string]
+     - table           :- :string
+     - select          :- :boolean
+     - update          :- :boolean
+     - insert          :- :boolean
+     - delete          :- :boolean
+
+   Either:
+   (1) role is null, corresponding to the privileges of the DB connection's current user
+   (2) role is not null, corresponding to the privileges of the role 
+
+database-supports? [driver feature database]
+Does this driver and specific instance of a database support a certain `feature`?
+  (A feature is a keyword, and can be any of the ones listed above in `driver-features`.
+  Note that it's the same set of `driver-features` with respect to
+  both database-supports? and [[supports?]])
+
+  Database is guaranteed to be a Database instance.
+
+  Most drivers can always return true or always return false for a given feature
+  (e.g., :left-join is not supported by any version of Mongo DB).
+
+  In some cases, a feature may only be supported by certain versions of the database engine.
+  In this case, after implementing `[[dbms-version]]` for your driver
+  you can determine whether a feature is supported for this particular database.
+
+    (database-supports? :mongo :set-timezone mongo-db) ; -> true 
+
+db-default-timezone [driver database]
+Return the *system* timezone ID name of this database, i.e. the timezone that local dates/times/datetimes are
+  considered to be in by default. Ideally, this method should return a timezone ID like `America/Los_Angeles`, but an
+  offset formatted like `-08:00` is acceptable in cases where the actual ID cannot be provided.
+
+  This is currently used only when syncing the
+  Database (see [[metabase.sync.sync-metadata.sync-timezone/sync-timezone!]]) -- the result of this method is stored
+  in the `timezone` column of Database.
+
+  *In theory* this method should probably not return `nil`, since every Database presumably assumes some timezone for
+  LocalDate(Time)s types, but *in practice* implementations of this method return `nil` for some drivers. For example
+  the default implementation for `:sql-jdbc` returns `nil` unless the driver in question
+  implements [[metabase.driver.sql-jdbc.sync/db-default-timezone]]; the `:h2` driver does not for example. Why is
+  this? Who knows, but it's something you should keep in mind.
+
+  This method should return a [[String]], a [[java.time.ZoneId]], or a [[java.time.ZoneOffset]]. 
+
+db-details-to-test-and-migrate [driver details]
+When `details` are in an ambiguous state, this should return a sequence of modified `details` of the
+   possible, normalized, unambiguous states.
+
+   The result of this function will be used to test each new `details`, in order,
+   and the first one that succeeds will be saved in the database.
+
+   If none of the details succeed, nothing will change.
+   Returning `nil` will skip the test.
+
+   This should, in practice, supersede `normalize-db-details`. 
+
+db-start-of-week [driver]
+Return the day that is considered to be the start of week by `driver`. Should return a keyword such as `:sunday`. 
+
+dbms-version [driver database]
+Return a map containing information that describes the version of the DBMS. This typically includes a
+  `:version` containing the (semantic) version of the DBMS as a string and potentially a `:flavor`
+  specifying the flavor like `MySQL` or `MariaDB`. 
+
+default-field-order [driver]
+Return how fields should be sorted by default for this database. 
+
+describe-database [driver database]
+Return a map containing information that describes all of the tables in a `database`, an instance of the `Database`
+  model. It is expected that this function will be peformant and avoid draining meaningful resources of the database.
+  Results should match the [[metabase.sync.interface/DatabaseMetadata]] schema. 
+
+describe-fields [driver database & {:keys [schema-names table-names]}]
+Returns a reducible collection of maps, each containing information about fields. It includes which keys are
+  primary keys, but not foreign keys. It does not include nested fields (e.g. fields within a JSON column).
+
+  Takes keyword arguments to narrow down the results to a set of
+  `schema-names` or `table-names`.
+
+  Results match [[metabase.sync.interface/FieldMetadataEntry]].
+  Results are optionally filtered by `schema-names` and `table-names` provided.
+  Results are ordered by `table-schema`, `table-name`, and `database-position` in ascending order. 
+
+describe-fks [driver database & {:keys [schema-names table-names]}]
+Returns a reducible collection of maps, each containing information about foreign keys.
+  Takes optional keyword arguments to narrow down the results to a set of `schema-names`
+  and `table-names`.
+
+  Results match [[metabase.sync.interface/FKMetadataEntry]].
+  Results are optionally filtered by `schema-names` and `table-names` provided.
+  Results are ordered by `fk-table-schema` and `fk-table-name` in ascending order.
+
+  Required for drivers that support `:describe-fks`. 
+
+describe-indexes [driver database & {:keys [schema-names table-names]}]
+Returns a reducible collection of maps, each containing information about the indexes of a database.
+  Currently we only sync single column indexes or the first column of a composite index. We currently only support
+   indexes on unnested fields (i.e., where parent_id is null).
+
+  Takes keyword arguments to narrow down the results to a set of
+  `schema-names` or `table-names`.
+
+  Results match [[metabase.sync.interface/FieldIndexMetadata]].
+  Results are optionally filtered by `schema-names` and `table-names` provided. 
+
+describe-table [driver database table]
+Return a map containing a single field `:fields` that describes the fields in a `table`. `database` will be an
+  instance of the `Database` model; and `table`, an instance of the `Table` model. It is expected that this function
+  will be peformant and avoid draining meaningful resources of the database. The value of `:fields` should be a set of
+  values matching the [[metabase.sync.interface/TableMetadataField]] schema. 
+
+describe-table-fks [driver database table]
+Return information about the foreign keys in a `table`. Required for drivers that support :metadata/key-constraints
+  but not :describe-fks. Results should match the [[metabase.sync.interface/FKMetadata]] schema. 
+
+describe-table-indexes [driver database table]
+Returns a set of map containing information about the indexes of a table.
+  Currently we only sync single column indexes or the first column of a composite index.
+  Results should match the [[metabase.sync.interface/TableIndexMetadata]] schema. 
+
+display-name [driver]
+A nice name for the driver that we'll display to in the admin panel, e.g. "PostgreSQL" for `:postgres`. Default
+  implementation capitializes the name of the driver, e.g. `:oracle` becomes "Oracle".
+
+  When writing a driver that you plan to ship as a separate, lazy-loading plugin (including core drivers packaged this
+  way, like SQLite), you do not need to implement this method; instead, specifiy it in your plugin manifest, and
+  `lazy-loaded-driver` will create an implementation for you. Probably best if we only have one place where we set
+  values for this. 
+
+drop-table! [driver db-id table-name]
+Drop a table named `table-name`. If the table doesn't exist it will not be dropped. `table-name` may be qualified
+  by schema e.g.
+
+    schema.table 
+
+dynamic-database-types-lookup [driver database database-types]
+Generate mapping of `database-types` to base types for dynamic database types (eg. defined by user; postgres enums).
+
+  The `sql-jdbc.sync/database-type->base-type` is used as simple look-up, while this method is expected to do database
+  calls when necessary. At the time it was added, its purpose was to check for postgres enum types. Its meant to
+  be extended also for other dynamic types when necessary. 
+
+escape-alias [driver column-or-table-alias]
+Escape a `column-or-table-alias` string in a way that makes it valid for your database. This method is used for
+  existing columns; aggregate functions and other expressions; joined tables; and joined subqueries; be sure to return
+  the lowest common denominator amongst if your database has different requirements for different identifier types.
+
+  These aliases can be dynamically generated in [[metabase.query-processor.util.add-alias-info]] or elsewhere
+  (usually based on underlying table or column names) but can also be specified in the MBQL query itself for explicit
+  joins. For `:sql` drivers, the aliases generated here will be quoted in the resulting SQL.
+
+  The default impl of [[escape-alias]] calls [[metabase.driver.impl/truncate-alias]] and truncates the alias
+  to [[metabase.driver.impl/default-alias-max-length-bytes]]. You can call this function with a different max length
+  if you need to generate shorter aliases.
+
+  That method is currently only used drivers that derive from `:sql` and for drivers that support joins. If your
+  driver is/does neither, you do not need to implement this method at this time. 
+
+escape-entity-name-for-metadata [driver entity-name]
+escaping for when calling `.getColumns` or `.getTables` on table names or schema names. Useful for when a database
+  driver has difference escaping rules for table or schema names when used from metadata.
+
+  For example, oracle treats slashes differently when querying versus when used with `.getTables` or `.getColumns` 
+
+execute-reducible-query [driver query context respond]
+Execute a native query against that database and return rows that can be reduced using `transduce`/`reduce`.
+
+  Pass metadata about the columns and the reducible object to `respond`, which has the signature
+
+    (respond results-metadata rows)
+
+  You can use [[metabase.query-processor.reducible/reducible-rows]] to create reducible, streaming results.
+
+  `respond` MUST BE CALLED SYNCHRONOUSLY!!!
+
+  Example impl:
+
+    (defmethod reducible-query :my-driver
+      [_ query context respond]
+      (with-open [results (run-query! query)]
+        (respond
+         {:cols [{:name "my_col"}]}
+         (qp.reducible/reducible-rows (get-row results) (context/canceled-chan context))))) 
+
+execute-write-query! [driver query]
+Execute a writeback query e.g. one powering a custom `QueryAction` (see [[metabase.actions.models]]).
+  Drivers that support `:actions/custom` must implement this method. 
+
+humanize-connection-error-message [this message]
+Return a humanized (user-facing) version of an connection error message.
+  Generic error messages provided in [[metabase.driver.util/connection-error-messages]]; should be returned
+  as keywords whenever possible. This provides for both unified error messages and categories which let us point
+  users to the erroneous input fields.
+  Error messages can also be strings, or localized strings, as returned by [[metabase.util.i18n/trs]] and
+  `metabase.util.i18n/tru`. 
+
+incorporate-auth-provider-details [driver auth-provider auth-provider-response details]
+A multimethod for driver specific behavior required to incorporate response of an auth-provider into the DB details.
+   In most cases this means setting the :password and/or :username based on the auth-provider and its response. 
+
+incorporate-ssh-tunnel-details [driver db-details]
+A multimethod for driver-specific behavior required to incorporate details for an opened SSH tunnel into the DB
+  details. In most cases, this will simply involve updating the :host and :port (to point to the tunnel entry point,
+  instead of the backing database server), but some drivers may have more specific behavior.
+
+  WARNING! Implementations of this method may create new SSH tunnels, which need to be cleaned up. DO NOT USE THIS
+  METHOD DIRECTLY UNLESS YOU ARE GOING TO BE CLEANING UP ANY CREATED TUNNELS! Instead, you probably want to
+  use [[metabase.driver.sql-jdbc.connection.ssh-tunnel/with-ssh-tunnel]]. See #24445 for more information. 
+
+initialize! [driver]
+DO NOT CALL THIS METHOD DIRECTLY. Called automatically once and only once the first time a non-trivial driver method
+  is called; implementers should do one-time initialization as needed (for example, registering JDBC drivers used
+  internally by the driver.)
+
+  'Trivial' methods include a tiny handful of ones like [[connection-properties]] that simply provide information
+  about the driver, but do not connect to databases; these can be be supplied, for example, by a Metabase plugin
+  manifest file (which is supplied for lazy-loaded drivers). Methods that require connecting to a database dispatch
+  off of [[the-initialized-driver]], which will initialize a driver if not already done so.
+
+  You will rarely need to write an implentation for this method yourself. A lazy-loaded driver (like most of the
+  Metabase drivers in v1.0 and above) are automatiaclly given an implentation of this method that performs the
+  `init-steps` specified in the plugin manifest (such as loading namespaces in question).
+
+  If you do need to implement this method yourself, you do not need to call parent implementations. We'll take care of
+  that for you. 
+
+insert-into! [driver db-id table-name column-names values]
+Insert `values` into a table named `table-name`. `values` is a lazy sequence of rows, where each row's order matches
+   `column-names`.
+
+  The types in `values` may include:
+  - java.lang.String
+  - java.lang.Double
+  - java.math.BigInteger
+  - java.lang.Boolean
+  - java.time.LocalDate
+  - java.time.LocalDateTime
+  - java.time.OffsetDateTime 
+
+mbql->native [driver query]
+Transpile an MBQL query into the appropriate native query form. `query` will match the schema for an MBQL query in
+  [[metabase.legacy-mbql.schema/Query]]; this function should return a native query that conforms to that schema.
+
+  If the underlying query language supports remarks or comments, the driver should
+  use [[metabase.query-processor.util/query->remark]] to generate an appropriate message and include that in an
+  appropriate place; alternatively a driver might directly include the query's `:info` dictionary if the underlying
+  language is JSON-based.
+
+  The result of this function will be passed directly into calls to [[execute-reducible-query]].
+
+  For example, a driver like Postgres would build a valid SQL expression and return a map such as:
+
+    {:query "-- Metabase card: 10 user: 5
+              SELECT * FROM my_table"}
+
+  In 0.51.0 and above, drivers should look the value of [[*compile-with-inline-parameters*]] and output a query with
+  all parameters inline when it is truthy. 
+
+normalize-db-details [driver database]
+Normalizes db-details for the given driver. This is to handle migrations that are too difficult to perform via
+  regular Liquibase queries. This multimethod will be called from a `:post-select` handler within the database model.
+  The full `database` model object is passed as the 2nd parameter, and the multimethod implementation is expected to
+  update the value for `:details`. The default implementation is essentially `identity` (i.e returns `database`
+  unchanged). This multimethod will only be called if `:details` is actually present in the `database` map. 
+
+notify-database-updated [driver database]
+Notify the driver that the attributes of a `database` have changed, or that `database was deleted. This is
+  specifically relevant in the event that the driver was doing some caching or connection pooling; the driver should
+  release ALL related resources when this is called. 
+
+prettify-native-form [driver native-form]
+Pretty-format native form presumably coming from compiled query.
+  Used eg. in the API endpoint `/dataset/native`, to present the user with a nicely formatted query.
+
+  # How to use and extend this method?
+
+  At the time of writing, this method acts as identity for nosql drivers. However, story with sql drivers is a bit
+  different. To extend it for sql drivers, developers could use [[metabase.driver.sql.util/format-sql]]. Function
+  in question is implemented in a way, that developers, implemnting this multimethod can:
+  - Avoid implementing it completely, if their driver keyword representation corresponds to key in
+    [[metabase.driver.sql.util/dialects]] (eg. `:postgres`).
+  - Ignore implementing it, if it is sufficient to format their drivers native form with dialect corresponding
+    to `:standardsql`'s value from the dialects map (eg `:h2`).
+  - Use [[metabase.driver.sql.util/format-sql]] in this method's implementation, providing dialect keyword
+    representation that corresponds to to their driver's formatting (eg. `:sqlserver` uses `:tsql`).
+  - Completly reimplement this method with their special formatting code. 
+
+query-canceled? [driver e]
+Test if an exception is due to a query being canceled due to user action. For JDBC drivers this can
+  happen when setting `.setQueryTimeout`. 
+
+query-result-metadata [driver query]
+Optional. Efficiently calculate metadata about the columns that would be returned if we were to run a
+  `query` (hopefully without actually running), for example:
+
+    (query-results-metadata
+     :postgres
+     {:lib/type :mbql/query
+      :stages   [{:lib/type :mbql.stage/native
+                  :native   "SELECT * FROM venues WHERE id = ?"
+                  :args     [1]}]
+      ...})
+    =>
+    [{:lib/type      :metadata/column
+      :name          "ID"
+      :database-type "BIGINT"
+      :base-type     :type/BigInteger}
+     {:lib/type      :metadata/column
+      :name          "NAME"
+      :database-type "CHARACTER VARYING"
+      :base-type     :type/Text}
+      ...]
+
+  Metadata should be returned as a sequence of column maps matching the `:metabase.lib.schema.metadata/column` shape.
+
+  This is needed in certain circumstances such as saving native queries before they have been run; metadata for
+  MBQL-only queries can usually be determined by looking at the query itself without any driver involvement.
+
+  If this method does need to be invoked, ideally it can calculate this information without actually having to run the
+  query in question; it that is not possible, ideally we'd run a faster version of the query with the equivalent of
+  `LIMIT 0` or `LIMIT 1`.
+
+  A naive default implementation of this method lives in [[metabase.query-processor.metadata]] that runs the query in
+  question with a `LIMIT 1` added to it. Drivers that can infer result metadata in a more performant way (i.e.,
+  without actually running the query) should implement this method.
+
+  The `:sql-jdbc` parent driver provides a default implementation for JDBC-based drivers
+  in [[metabase.driver.sql-jdbc.metadata/query-result-metadata]], so you shouldn't need to implement this yourself if
+  your driver derives from `:sql-jdbc`. For other drivers, please use this implementation as a reference when working
+  on your own one.
+
+  There is no guarantee that `query` is already fully compiled from MBQL to the appropriate native query
+  language (e.g. SQL), so you should call [[metabase.query-processor.compile/compile]] to get a fully-compiled native
+  query. 
+
+set-role! [driver conn role]
+Sets the database role used on a connection. Called prior to query execution for drivers that support connection
+  impersonation (an EE-only feature). 
+
+splice-parameters-into-native-query [driver inner-query]
+Deprecated and unused in 0.51.0+; multimethod declaration left here so drivers implementing it can still compile
+  until we remove this method completely in 0.54.0 or later.
+
+  Instead of implementing this method, you should instead look at the value
+  of [[metabase.driver/*compile-with-inline-parameters*]] in your implementation of [[metabase.driver/mbql->native]]
+  and adjust behavior accordingly. 
+
+substitute-native-parameters [driver inner-query]
+For drivers that support `:native-parameters`. Substitute parameters in a normalized 'inner' native query.
+
+    {:query "SELECT count(*) FROM table WHERE id = {{param}}"
+     :template-tags {:param {:name "param", :display-name "Param", :type :number}}
+     :parameters    [{:type   :number
+                      :target [:variable [:template-tag "param"]]
+                      :value  2}]}
+    ->
+    {:query "SELECT count(*) FROM table WHERE id = 2"}
+
+  Much of the implementation for this method is shared across drivers and lives in the
+  `metabase.driver.common.parameters.*` namespaces. See the `:sql` and `:mongo` drivers for sample implementations of
+  this method.`Driver-agnostic end-to-end native parameter tests live in
+  [[metabase.query-processor-test.parameters-test]] and other namespaces. 
+
+superseded-by [driver]
+Returns the driver that supersedes the given `driver`.  A non-nil return value means that the given `driver` is
+  deprecated in Metabase and will eventually be replaced by the returned driver, in some future version (at which point
+  any databases using it will be migrated to the new one).
+
+  This is currently only used on the frontend for the purpose of showing/hiding deprecated drivers. A driver can make
+  use of this facility by adding a top-level `superseded-by` key to its plugin manifest YAML file, or (less preferred)
+  overriding this multimethod directly. 
+
+sync-in-context [driver database f]
+Drivers may provide this function if they need to do special setup before a sync operation such as
+  `sync-database!`. The sync operation itself is encapsulated as the lambda `f`, which must be called with no arguments.
+
+    (defn sync-in-context [driver database f]
+      (with-connection [_ database]
+        (f))) 
+
+syncable-schemas [driver database]
+Returns the set of syncable schemas in the database (as strings). 
+
+table-known-to-not-exist? [driver e]
+Test if an exception is due to a table not existing. 
+
+table-name-length-limit [driver]
+Return the maximum number of bytes allowed in a table name, or `nil` if there is no limit. 
+
+table-rows-sample [driver table fields rff opts]
+Processes a sample of rows produced by `driver`, from the `table`'s `fields`
+  using the query result processing function `rff`.
+  The default implementation defined in [[[metabase.driver.common.table-rows-sample]] runs a
+  row sampling MBQL query using the regular query processor to produce the
+  sample rows. This is good enough in most cases so this multimethod should not
+  be implemented unless really necessary.
+  `opts` is a map that may contain additional parameters:
+  `:truncation-size`: size to truncate text fields to if the driver supports
+  expressions. 
+
+table-rows-seq [driver database table]
+Return a sequence of *all* the rows in a given `table`, which is guaranteed to have at least `:name` and `:schema`
+  keys. (It is guaranteed to satisfy the `DatabaseMetadataTable` schema in `metabase.sync.interface`.) Currently, this
+  is only used for iterating over the values in a `_metabase_metadata` table. As such, the results are not expected to
+  be returned lazily. There is no expectation that the results be returned in any given order.
+
+  This method is currently only used by the H2 driver to load the Sample Database, so it is not neccesary for any other
+  drivers to implement it at this time. 
+
+truncate! [driver db-id table-name]
+Delete the current contents of `table-name`.
+  If something like a SQL TRUNCATE statement is supported, we use that, but may otherwise fall back to explicitly
+  deleting rows, or dropping and recreating the table.
+  Depending on the driver, the semantics can vary on whether triggers are fired, AUTO_INCREMENT is reset etc.
+  The application assumes that the implementation can be rolled back if inside a transaction. 
+
+upload-type->database-type [driver upload-type]
+Returns the database type for a given `metabase.upload` type as a HoneySQL spec. This will be a vector, which allows
+  for additional options. Sample values:
+
+  - [:bigint]
+  - [[:varchar 255]]
+  - [:generated-always :as :identity] 
+
+metabase.driver-api.core
+->legacy-MBQL [x]
+Coerce something to legacy MBQL (the version of MBQL understood by the query processor and Metabase Lib v1) if it's
+  not already legacy MBQL. 
+
+field-reference-mlv2 [driver field-inst]
+Generate a reference for the field instance `field-inst` appropriate for the driver `driver`.
+  By default this is just the name of the field, but it can be more complicated, e.g., take
+  parent fields into account. 
+
+name-for-logging [instance]
+Return an appropriate string for logging an object in sync logging messages. Should be something like
+
+    "postgres Database 'test-data'"
+
+  This function is used all over the sync code to make sure we have easy access to consistently formatted descriptions
+  of various objects. 
+
+perform-action!* [driver action database arg-map]
+Multimethod for doing an Action. The specific `action` is a keyword like `:row/create` or `:bulk/create`; the shape
+  of `arg-map` depends on the action being performed. [[action-arg-map-spec]] returns the appropriate spec to use to
+  validate the args for a given action. When implementing a new action type, be sure to implement both this method
+  and [[action-arg-map-spec]].
+
+  At the time of this writing Actions are performed with either `POST /api/action/:action-namespace/:action-name`,
+  which passes in the request body as `args-map` directly, or `POST
+  /api/action/:action-namespace/:action-name/:table-id`, which passes in an `args-map` like
+
+    {:table-id <table-id>, :arg <request-body>}
+
+  The former endpoint is currently used for the various `:row/*` Actions while the version with `:table-id` as part of
+  the route is currently used for `:bulk/*` Actions.
+
+  DON'T CALL THIS METHOD DIRECTLY TO PERFORM ACTIONS -- use [[perform-action!]] instead which does normalization,
+  validation, and binds Database-local values. 
+
+query->remark [driver query]
+Generate an appropriate remark `^String` to be prepended to a query to give DBAs additional information about the query
+  being executed. See documentation for [[metabase.driver/mbql->native]] and #2386.
+  for more information.
+
+  So this turns your average 10, 20, 30 character query into a 110, 120, 130 etc character query.
+  One leaky-abstraction part of this is that this will confuse the bejeezus out of
+  people who first encounter their passed-through RDBMS error messages.
+
+  'Hey, this is a 20 character query! What's it talking about, error at position 120?'
+  This gets fixed, but in a spooky-action-at-a-distance way, in
+  `frontend/src/metabase/query_builder/components/VisualizationError.jsx` 
+
+setting-get-value-of-type [setting-type setting-definition-or-name]
+Get the value of `setting-definition-or-name` as a value of type `setting-type`. This is used as the default getter
+  for Settings with `setting-type`.
+
+  Impls should call [[get-raw-value]] to get the underlying possibly-serialized value and parse it appropriately if it
+  comes back as a String; impls should only return values that are of the correct type (e.g. the `:boolean` impl
+  should only return [[Boolean]] values). 
+
+spec [db-type details]
+Create a [[clojure.java.jdbc]] spec map from broken-out database `details`. 
+
+metabase.driver.ddl.interface
+check-can-persist [database]
+Verify that the source database is acceptable to persist. Returns a tuple of a boolean and `:persist.check/valid` in
+  the event it was successful or a keyword indicating the reason for failure.
+
+  Examples:
+  - [true  :persist.check/valid]
+  - [false :persist.check/create-schema]
+  - [false :persist.check/create-table]
+  - [false :persist.check/read-table]
+  - [false :persist.check/delete-table] 
+
+format-name [driver table-or-field-name]
+Transform a lowercase string Table or Field name in a way appropriate for this dataset (e.g., `h2` would want to
+  upcase these names; `mongo` would want to use `"_id"` in place of `"id"`. This method should return a string.
+  Defaults to an identity implementation.
+
+  This is actually ultimately used to format any name that comes back
+  from [[metabase.test.data.sql/qualified-name-components]] -- so if you include the Database name there, it will get
+  formatted by this as well. 
+
+refresh! [driver database definition dataset-query]
+Refresh a model in a datastore. A table is created and populated in the source datastore, not the application
+  database. Assumes that the destination schema is populated and permissions are correct. This should all be true
+  if `(driver/database-supports engine :persisted-models database)` returns true. Returns a map with :state that
+  is :success or :error. If :state is :error, includes a key :error with a string message. 
+
+unpersist! [driver database persisted-info]
+Unpersist a persisted model. Responsible for removing the persisted table. 
+
+metabase.driver.sql
+->prepared-substitution [driver x]
+Returns a `PreparedStatementSubstitution` (see schema below) for `x` and the given driver. This allows driver
+  specific parameters and SQL replacement text (usually just ?). The param value is already prepared and ready for
+  inlcusion in the query, such as what's needed for SQLite and timestamps. 
+
+default-database-role [driver database]
+The name of the default role for a given database, used for queries that do not have custom user
+  impersonation rules configured for them. This must be implemented for each driver that supports user impersonation. 
+
+json-field-length [driver json-field-identifier]
+Return a HoneySQL expression that calculates the number of characters in a JSON field for a given driver.
+  `json-field-identifier` is the Identifier ([[metabase.util.honey-sql-2/Identifier]]) for a JSON field. 
+
+set-role-statement [driver role]
+SQL for setting the active role for a connection, such as USE ROLE or equivalent, for the given driver. 
+
+metabase.driver.sql-jdbc
+impl-query-canceled? [driver e]
+Implementing multimethod for is query canceled. Notes when a query is canceled due to user action,
+  which can include using the `.setQueryTimeout` on a `PreparedStatement.` Use this instead of implementing
+  driver/query-canceled so extracting the SQLException from an exception chain can happen once for jdbc-
+  based drivers. 
+
+impl-table-known-to-not-exist? [driver e]
+Implementing multimethod for is table known to not exist. Use this instead of implementing
+  driver/query-canceled so extracting the SQLException from an exception chain can happen once for jdbc-
+  based drivers. 
+
+metabase.driver.sql-jdbc.actions
+base-type->sql-type-map [driver]
+Return a map of [[metabase.types.core]] type to SQL string type name. Used for casting. Looks like we're just
+  copypasting this from implementations of [[metabase.test.data.sql/field-base-type->sql-type]] so go find that stuff
+  if you need to write more implementations for this. 
+
+do-nested-transaction [driver connection thunk]
+Execute `thunk` inside a nested transaction inside `connection`, which is currently in a transaction. If `thunk`
+  throws an Exception, the nested transaction should be rolled back, but the parent transaction should be able to
+  proceed.
+
+  Why do we need this?
+
+  With things like bulk insert, we want to collect all the errors for all the rows in one go. Say you have 4 rows, 1 2
+  3 and 4. If 1 errors then depending on the DBMS, the transaction enters an error state that disallows doing anything
+  else. 2, 3, and 4 will error with a "transaction has been aborted" error that you can't clear (AFAIK). This
+  affects Postgres but not H2. Not sure about other DBs yet.
+
+  Without using nested transactions, if you have errors in rows 2 and 4 you'd only see the error in row 2 since 3 and
+  4 would fail with "transaction has been aborted" or whatever.
+
+  So the point of using nested transactions is that if 2 is done inside a nested transaction we can rollback the
+  nested transaction which allows the top-level transaction to proceed even tho part of it errored. 
+
+maybe-parse-sql-error [driver error-type database action-type error-message]
+Try to parse the SQL error message returned by JDBC driver.
+
+  The methods should returns a map of:
+  - type: the error type. Check [[metabase.actions.error]] for the full list
+  - message: a nice message summarized of what went wrong
+  - errors: a map from field-name => sepcific error message. This is used by UI to display per fields error
+    If non per-column error is available, returns an empty map.
+
+  Or return `nil` if the parser doesn't match. 
+
+prepare-query* [driver action hsql-query]
+Multimethod for preparing a honeysql query `hsql-query` for a given action type `action`.
+  `action` is a keyword like `:row/create` or `:bulk/create`; `hsql-query` is a generic
+  query of the type corresponding to `action`. 
+
+select-created-row [driver create-hsql conn result]
+Multimethod for converting the result of an insert into the created row.
+  `create-hsql` is the honeysql query used to insert the new row,
+  `conn` is the DB connection used to insert the new row and
+  `result` is the value returned by the insert command. 
+
+metabase.driver.sql-jdbc.connection
+connection-details->spec [driver details-map]
+Given a Database `details-map`, return an unpooled JDBC connection spec. Driver authors should implement this method,
+  but you probably shouldn't be *USE* this method directly! If you want a pooled connection spec (which you almost
+  certainly do), use [[db->pooled-connection-spec]] instead.
+
+  DO NOT USE THIS METHOD DIRECTLY UNLESS YOU KNOW WHAT YOU ARE DOING! THIS RETURNS AN UNPOOLED CONNECTION SPEC! IF YOU
+  WANT A CONNECTION SPEC FOR RUNNING QUERIES USE [[db->pooled-connection-spec]] INSTEAD WHICH WILL RETURN A *POOLED*
+  CONNECTION SPEC. 
+
+data-source-name [driver details]
+Name, from connection details, to use to identify a database in the c3p0 `dataSourceName`. This is used for so the
+  DataSource has a useful identifier for debugging purposes.
+
+  The default method uses the first non-nil value of the keys `:db`, `:dbname`, `:sid`, or `:catalog`; implement a new
+  method if your driver does not have any of these keys in its details. 
+
+data-warehouse-connection-pool-properties [driver database]
+c3p0 connection pool properties for connected data warehouse DBs. See
+  https://www.mchange.com/projects/c3p0/#configuration_properties for descriptions of properties.
+
+  The c3p0 dox linked above do a good job of explaining the purpose of these properties and why you might set them.
+  Generally, I have tried to choose configuration options for the data warehouse connection pools that minimize memory
+  usage and maximize reliability, even when it comes with some added performance overhead. These pools are used for
+  powering Cards and the sync process, which are less sensitive to overhead than something like the application DB.
+
+  Drivers that need to override the default properties below can provide custom implementations of this method. 
+
+metabase.driver.sql-jdbc.execute
+column-metadata [driver rsmeta]
+Return a sequence of maps containing information about the corresponding columns in query results. The default
+  implementation fetches this information via the result set metadata. It is unlikely you will need to override this. 
+
+connection-with-timezone [driver database timezone-id]
+Deprecated in Metabase 47. Implement [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] instead.
+  This method will be removed in or after Metabase 50. 
+
+do-with-connection-with-options [driver db-or-id-or-spec options f]
+Fetch a [[java.sql.Connection]] from a `driver`/`db-or-id-or-spec`, and invoke
+
+    (f connection)
+
+  If `db-or-id-or-spec` is a Database or Database ID, the default implementation fetches a pooled connection spec for
+  that Database using [[datasource]].
+
+  If `db-or-id-or-spec` is a `clojure.java.jdbc` spec, it fetches a Connection
+  using [[clojure.java..jdbc/get-connection]]. Note that this will not be a pooled connection unless your spec is for
+  a pooled DataSource.
+
+  `options` matches the [[ConnectionOptions]] schema above.
+
+  * If `:session-timezone` is passed, it should be used to set the Session timezone for the Connection. If not passed,
+    leave as-is
+
+  * If `:write?` is NOT passed or otherwise falsey, make the connection read-only if possible; if it is truthy, make
+    the connection read-write. Note that this current does not run things inside a transaction automatically; you'll
+    have to do that yourself if you want it
+
+  The normal 'happy path' is more or less
+
+    (with-open [conn (.getConnection (datasource driver db-or-id-or-spec))]
+      (set-best-transaction-level! driver conn)
+      (set-time-zone-if-supported! driver conn session-timezone)
+      (.setReadOnly conn true)
+      (.setAutoCommit conn true) ; so the query(s) are not ran inside a transaction
+      (.setHoldability conn ResultSet/CLOSE_CURSORS_AT_COMMIT)
+      (f conn))
+
+  This default implementation is abstracted out into two functions, [[do-with-resolved-connection]]
+  and [[set-default-connection-options!]], that you can use as needed in custom implementations. See various driver
+  implementations for examples. You should only set connection options on top-level calls
+  to [[do-with-connection-with-options]]; check whether this is a [[recursive-connection?]] before setting options.
+
+  There are two usual ways to set the session timezone if your driver supports them:
+
+  1. Specifying the session timezone based on the value of [[metabase.driver/report-timezone]] as a JDBC connection
+     parameter in the JDBC connection spec returned by [[metabase.driver.sql-jdbc.connection/connection-details->spec]].
+     If the spec returned by this method changes, connection pools associated with it will be flushed automatically.
+     This is the preferred way to set session timezones; if you set them this way, you DO NOT need to implement this
+     method unless you need to do something special with regards to setting the transaction level.
+
+  2. Setting the session timezone manually on the [[java.sql.Connection]] returned by [[datasource]] based on the
+     value of `session-timezone`.
+
+    2a. The default implementation will do this for you by executing SQL if you implement
+        [[set-timezone-sql]].
+
+    2b. You can implement this method, [[do-with-connection-with-options]], yourself and set the timezone however you
+        wish. Only set it if `session-timezone` is not `nil`!
+
+   Custom implementations should set transaction isolation to the least-locking level supported by the driver, and make
+   connections read-only (*after* setting timezone, if needed). 
+
+execute-prepared-statement! [driver stmt]
+Execute a `PreparedStatement`, returning a `ResultSet`. Default implementation simply calls `.executeQuery()`. It is
+  unlikely you will need to override this. Prior to 0.39, this was named execute-query! 
+
+execute-statement! [driver stmt sql]
+Runs a SQL select query with a given `Statement`, returning a `ResultSet`. Default implementation simply calls
+  `.execute()` for the given sql on the given statement, and then `.getResultSet()` if that returns true (throwing an
+  exception if not). It is unlikely you will need to override this. 
+
+inject-remark [driver sql remark]
+Injects the remark into the SQL query text. 
+
+prepared-statement [driver connection sql params]
+Create a PreparedStatement with `sql` query, and set any `params`. You shouldn't need to override the default
+  implementation for this method; if you do, take care to set options to maximize result set read performance (e.g.
+  `ResultSet/TYPE_FORWARD_ONLY`); refer to the default implementation. 
+
+read-column-thunk [driver rs rsmeta i]
+Return a zero-arg function that, when called, will fetch the value of the column from the current row. This also
+  supports defaults for the entire driver:
+
+    ;; default method for Postgres not covered by any [driver jdbc-type] methods
+    (defmethod read-column-thunk :postgres
+      ...) 
+
+set-parameter [driver prepared-statement i object]
+Set the `PreparedStatement` parameter at index `i` to `object`. Dispatches on driver and class of `object`. By
+  default, this calls `.setObject`, but drivers can override this method to convert the object to a different class or
+  set it with a different intended JDBC type as needed. 
+
+set-timezone-sql [driver]
+Return a format string containing a SQL statement to be used to set the timezone for the current transaction.
+  The `%s` will be replaced with a string literal for a timezone, e.g. `US/Pacific.` (Timezone ID will come already
+  wrapped in single quotes.)
+
+    "SET @@session.time_zone = %s;"
+
+  This method is only called for drivers using the default implementation
+  of [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]]; it should be considered deprecated in
+  favor of implementing [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] directly. 
+
+statement [driver connection]
+Create a Statement object using the given connection. Only called if statement-supported? above returns true. This
+  is to be used to execute native queries, which implies there are no parameters. As with prepared-statement, you
+  shouldn't need to override the default implementation for this method; if you do, take care to set options to maximize
+  result set read performance (e.g. `ResultSet/TYPE_FORWARD_ONLY`); refer to the default implementation. 
+
+statement-supported? [driver]
+Indicates whether the given driver supports creating a java.sql.Statement, via the Connection. By default, this is
+  true for all :sql-jdbc drivers.  If the underlying driver does not support Statement creation, override this as
+  false. 
+
+metabase.driver.sql-jdbc.execute.old-impl
+connection-with-timezone [driver database timezone-id]
+Deprecated in Metabase 47. Implement [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] instead.
+  This method will be removed in or after Metabase 50. 
+
+set-timezone-sql [driver]
+Return a format string containing a SQL statement to be used to set the timezone for the current transaction.
+  The `%s` will be replaced with a string literal for a timezone, e.g. `US/Pacific.` (Timezone ID will come already
+  wrapped in single quotes.)
+
+    "SET @@session.time_zone = %s;"
+
+  This method is only called for drivers using the default implementation
+  of [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]]; it should be considered deprecated in
+  favor of implementing [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] directly. 
+
+metabase.driver.sql-jdbc.sync
+active-tables [driver connection schema-inclusion-filters schema-exclusion-filters]
+Return a reducible sequence of maps containing information about the active tables/views, collections, or equivalent
+  that currently exist in a database. Each map should contain the key `:name`, which is the string name of the table.
+  For databases that have a concept of schemas, this map should also include the string name of the table's `:schema`.
+
+  Two different implementations are provided in this namespace: `fast-active-tables` (the default), and
+  `post-filtered-active-tables`. You should be fine using the default, but refer to the documentation for those
+  functions for more details on the differences. 
+
+alter-columns-sql [driver table-name column-definitions]
+Generate the query to be used with [[driver/alter-columns!]]. 
+
+alter-table-columns-sql [driver table-name column-definitions & opts]
+Generate the query to be used with [[driver/alter-table-columns!]].
+  Supersedes the deprecated [[alter-columns-sql]].
+  This version receives additional kw-args `opts` (as passed to [[driver/alter-table-columns!]]). 
+
+column->semantic-type [driver database-type column-name]
+Attempt to determine the semantic-type of a field given the column name and native type. For example, the Postgres
+  driver can mark Postgres JSON type columns as `:type/SerializedJSON` semantic type.
+
+  `database-type` and `column-name` will be strings. 
+
+current-user-table-privileges [driver conn-spec & args]
+Returns the rows of data as arrays needed to populate the table_privileges table
+   with the DB connection's current user privileges.
+   The data contains the privileges that the user has on the given `database`.
+   The privileges include select, insert, update, and delete.
+
+   The rows have the following keys and value types:
+     - role            :- [:maybe :string]
+     - schema          :- [:maybe :string]
+     - table           :- :string
+     - select          :- :boolean
+     - update          :- :boolean
+     - insert          :- :boolean
+     - delete          :- :boolean
+
+   Either:
+   (1) role is null, corresponding to the privileges of the DB connection's current user
+   (2) role is not null, corresponding to the privileges of the role 
+
+database-type->base-type [driver database-type]
+Given a native DB column type (as a keyword), return the corresponding `Field` `base-type`, which should derive from
+  `:type/*`. You can use `pattern-based-database-type->base-type` in this namespace to implement this using regex
+  patterns.
+
+  If you need to get mapping for dynamic (eg. user defined), that could require database call, check out
+  the `driver/dynamic-database-types-lookup`. 
+
+db-default-timezone [driver jdbc-spec]
+JDBC-specific version of of [[metabase.driver/db-default-timezone]] that takes a [[clojure.java.jdbc]] connection
+  spec rather than a set of DB details. If an implementation of this method is provided, it will be used automatically
+  in the default `:sql-jdbc` implementation of [[metabase.driver/db-default-timezone]].
+
+  This exists so we can reuse this code with the application database without having to create a new Connection pool
+  for the application DB.
+
+  DEPRECATED: you can implement [[metabase.driver/db-default-timezone]] directly;
+  use [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] to get a `java.sql.Connection` for a
+  Database. 
+
+describe-fields-pre-process-xf [driver db & args]
+Returns a (possibly stateful) transducer for computing metadata about the fields in `db`.
+   Occurs on the results of [[describe-fields-sql]].
+   Same args as [[describe-fields]]. 
+
+describe-fields-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-fields]],
+ i.e. [[describe-fields]]. 
+
+describe-fks-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-fks]],
+ i.e. [[describe-fks]]. 
+
+describe-indexes-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-indexes]],
+ i.e. [[describe-indexes]]. 
+
+describe-nested-field-columns [driver database table]
+Return information about the nestable columns in a `table`. Required for drivers that support
+  `:nested-field-columns`. Results should match the [[metabase.sync.interface/NestedFCMetadata]] schema. 
+
+describe-table-fields [driver conn table db-name-or-nil]
+Returns a set of column metadata for `table` using JDBC Connection `conn`. 
+
+excluded-schemas [driver]
+Return set of string names of schemas to skip syncing tables from. 
+
+fallback-metadata-query [driver db-name-or-nil schema-name table-name]
+SELECT columns from a given table so we can get column metadata. By default doesn't return any rows. This can be
+  overriden because SQLite is silly and only returns column information for views if the query returns a non-zero
+  number of rows.
+
+    (fallback-metadata-query :postgres "my_database" "public" "my_table")
+    ;; -> ["SELECT * FROM my_database.public.my_table WHERE 1 <> 1 LIMIT 0"] 
+
+filtered-syncable-schemas [driver connection metadata schema-inclusion-patterns schema-exclusion-patterns]
+Return a reducible sequence of string names of schemas that should be synced for the given database. Schemas for
+  which the current DB user has no `SELECT` permissions should be filtered out. The default implementation will fetch
+  a sequence of all schema names from the JDBC database metadata and filter out any schemas in `excluded-schemas`, along
+  with any that shouldn't be included based on the given inclusion and exclusion patterns (see the
+  `metabase.driver.sync` namespace for full explanation). 
+
+have-select-privilege? [driver connection table-schema table-name]
+Check if we have SELECT privileges for given `table`.
+
+  Default impl is in [[metabase.driver.sql-jdbc.sync.describe-database]]. 
+
+metabase.driver.sql-jdbc.sync.describe-table
+describe-fields-pre-process-xf [driver db & args]
+Returns a (possibly stateful) transducer for computing metadata about the fields in `db`.
+   Occurs on the results of [[describe-fields-sql]].
+   Same args as [[describe-fields]]. 
+
+describe-fields-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-fields]],
+ i.e. [[describe-fields]]. 
+
+describe-fks-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-fks]],
+ i.e. [[describe-fks]]. 
+
+describe-indexes-sql [driver & {:keys [schema-names table-names details]}]
+Returns a SQL query ([sql & params]) for use in the default JDBC implementation of [[metabase.driver/describe-indexes]],
+ i.e. [[describe-indexes]]. 
+
+describe-table-fields [driver conn table db-name-or-nil]
+Returns a set of column metadata for `table` using JDBC Connection `conn`. 
+
+get-table-pks [driver conn db-name-or-nil table]
+Returns a vector of primary keys for `table` using a JDBC DatabaseMetaData from JDBC Connection `conn`.
+  The PKs should be ordered by column names if there are multiple PKs.
+  Ref: https://docs.oracle.com/javase/8/docs/api/java/sql/DatabaseMetaData.html#getPrimaryKeys-java.lang.String-java.lang.String-java.lang.String-
+
+  Note: If db-name, schema, and table-name are not passed, this may return _all_ pks that the metadata's connection
+  can access.
+
+  This does not need to be implemented for drivers that support the [[driver/describe-fields]] multimethod. 
+
+metabase.driver.sql-jdbc.sync.interface
+active-tables [driver connection schema-inclusion-filters schema-exclusion-filters]
+Return a reducible sequence of maps containing information about the active tables/views, collections, or equivalent
+  that currently exist in a database. Each map should contain the key `:name`, which is the string name of the table.
+  For databases that have a concept of schemas, this map should also include the string name of the table's `:schema`.
+
+  Two different implementations are provided in this namespace: `fast-active-tables` (the default), and
+  `post-filtered-active-tables`. You should be fine using the default, but refer to the documentation for those
+  functions for more details on the differences. 
+
+alter-columns-sql [driver table-name column-definitions]
+Generate the query to be used with [[driver/alter-columns!]]. 
+
+alter-table-columns-sql [driver table-name column-definitions & opts]
+Generate the query to be used with [[driver/alter-table-columns!]].
+  Supersedes the deprecated [[alter-columns-sql]].
+  This version receives additional kw-args `opts` (as passed to [[driver/alter-table-columns!]]). 
+
+column->semantic-type [driver database-type column-name]
+Attempt to determine the semantic-type of a field given the column name and native type. For example, the Postgres
+  driver can mark Postgres JSON type columns as `:type/SerializedJSON` semantic type.
+
+  `database-type` and `column-name` will be strings. 
+
+current-user-table-privileges [driver conn-spec & args]
+Returns the rows of data as arrays needed to populate the table_privileges table
+   with the DB connection's current user privileges.
+   The data contains the privileges that the user has on the given `database`.
+   The privileges include select, insert, update, and delete.
+
+   The rows have the following keys and value types:
+     - role            :- [:maybe :string]
+     - schema          :- [:maybe :string]
+     - table           :- :string
+     - select          :- :boolean
+     - update          :- :boolean
+     - insert          :- :boolean
+     - delete          :- :boolean
+
+   Either:
+   (1) role is null, corresponding to the privileges of the DB connection's current user
+   (2) role is not null, corresponding to the privileges of the role 
+
+database-type->base-type [driver database-type]
+Given a native DB column type (as a keyword), return the corresponding `Field` `base-type`, which should derive from
+  `:type/*`. You can use `pattern-based-database-type->base-type` in this namespace to implement this using regex
+  patterns.
+
+  If you need to get mapping for dynamic (eg. user defined), that could require database call, check out
+  the `driver/dynamic-database-types-lookup`. 
+
+db-default-timezone [driver jdbc-spec]
+JDBC-specific version of of [[metabase.driver/db-default-timezone]] that takes a [[clojure.java.jdbc]] connection
+  spec rather than a set of DB details. If an implementation of this method is provided, it will be used automatically
+  in the default `:sql-jdbc` implementation of [[metabase.driver/db-default-timezone]].
+
+  This exists so we can reuse this code with the application database without having to create a new Connection pool
+  for the application DB.
+
+  DEPRECATED: you can implement [[metabase.driver/db-default-timezone]] directly;
+  use [[metabase.driver.sql-jdbc.execute/do-with-connection-with-options]] to get a `java.sql.Connection` for a
+  Database. 
+
+describe-nested-field-columns [driver database table]
+Return information about the nestable columns in a `table`. Required for drivers that support
+  `:nested-field-columns`. Results should match the [[metabase.sync.interface/NestedFCMetadata]] schema. 
+
+excluded-schemas [driver]
+Return set of string names of schemas to skip syncing tables from. 
+
+fallback-metadata-query [driver db-name-or-nil schema-name table-name]
+SELECT columns from a given table so we can get column metadata. By default doesn't return any rows. This can be
+  overriden because SQLite is silly and only returns column information for views if the query returns a non-zero
+  number of rows.
+
+    (fallback-metadata-query :postgres "my_database" "public" "my_table")
+    ;; -> ["SELECT * FROM my_database.public.my_table WHERE 1 <> 1 LIMIT 0"] 
+
+filtered-syncable-schemas [driver connection metadata schema-inclusion-patterns schema-exclusion-patterns]
+Return a reducible sequence of string names of schemas that should be synced for the given database. Schemas for
+  which the current DB user has no `SELECT` permissions should be filtered out. The default implementation will fetch
+  a sequence of all schema names from the JDBC database metadata and filter out any schemas in `excluded-schemas`, along
+  with any that shouldn't be included based on the given inclusion and exclusion patterns (see the
+  `metabase.driver.sync` namespace for full explanation). 
+
+have-select-privilege? [driver connection table-schema table-name]
+Check if we have SELECT privileges for given `table`.
+
+  Default impl is in [[metabase.driver.sql-jdbc.sync.describe-database]]. 
+
+metabase.driver.sql.parameters.substitution
+->prepared-substitution [driver x]
+Returns a `PreparedStatementSubstitution` (see schema below) for `x` and the given driver. This allows driver
+  specific parameters and SQL replacement text (usually just ?). The param value is already prepared and ready for
+  inlcusion in the query, such as what's needed for SQLite and timestamps. 
+
+->replacement-snippet-info [driver value]
+Return information about how `value` should be converted to SQL, as a map with keys `:replacement-snippet` and
+  `:prepared-statement-args`.
+
+    (->replacement-snippet-info :h2 "ABC") -> {:replacement-snippet "?", :prepared-statement-args "ABC"} 
+
+align-temporal-unit-with-param-type [driver field param-type]
+Returns a suitable temporal unit conversion keyword for `field`, `param-type` and the given driver.
+  The resulting keyword will be used to call the corresponding `metabase.driver.sql.query-processor/date`
+  implementation to convert the `field`.
+  Returns `nil` if the conversion is not necessary for this `field` and `param-type` combination.
+  Deprecated: use `align-temporal-unit-with-param-type-and-value` instead, as it has access to `value`. 
+
+align-temporal-unit-with-param-type-and-value [driver field param-type value]
+Returns a suitable temporal unit conversion keyword for `field`, `param-type`, `value` and the given driver.
+  The resulting keyword will be used to call the corresponding `metabase.driver.sql.query-processor/date`
+  implementation to convert the `field`.
+  Returns `nil` if the conversion is not necessary for this `field`, `param-type` and `value` combination. 
+
+time-grouping->replacement-snippet-info [driver column temporal-unit]
+Like ->replacement-snipped-info, but specialized for converting time-groupings.  This is separate from the main
+  ->replacement-snippet-info because it requires an extra argument. 
+
+metabase.driver.sql.query-processor
+->date [driver honeysql-expr]
+Cast to date. 
+
+->float [driver honeysql-expr]
+Cast to float. 
+
+->honeysql [driver mbql-expr-or-object]
+Return an appropriate HoneySQL form for an object. Dispatches off both driver and either clause name or object class
+  making this easy to override in any places needed for a given driver. 
+
+->integer [driver honeysql-expr]
+Cast to integer 
+
+add-interval-honeysql-form [driver hsql-form amount unit]
+Return a HoneySQL form that performs represents addition of some temporal interval to the original `hsql-form`.
+  `unit` is one of the units listed in [[metabase.util.date-2/add-units]].
+
+    (add-interval-honeysql-form :my-driver hsql-form 1 :day) -> [:date_add hsql-form 1 (h2x/literal 'day')]
+
+  `amount` is usually an integer, but can be floating-point for units like seconds. 
+
+apply-top-level-clause [driver top-level-clause honeysql-form inner-query]
+Implementations of this methods define how the SQL Query Processor handles various top-level MBQL clauses. Each
+  method is called when a matching clause is present in `query`, and should return an appropriately modified version
+  of `honeysql-form`. Most drivers can use the default implementations for all of these methods, but some may need to
+  override one or more (e.g. SQL Server needs to override this method for the `:limit` clause, since T-SQL uses `TOP`
+  instead of `LIMIT`). 
+
+cast-temporal-byte [driver coercion-strategy expr]
+Cast a byte field 
+
+cast-temporal-string [driver coercion-strategy honeysql-expr]
+Cast a string representing  
+
+current-datetime-honeysql-form [driver]
+HoneySQL form that should be used to get the current `datetime` (or equivalent). Defaults to `:%now`. Should ideally
+  include the database type info on the form (ex: via [[h2x/with-type-info]]). 
+
+date [driver unit honeysql-expr]
+Return a HoneySQL form for truncating a date or timestamp field or value to a given resolution, or extracting a date
+  component.
+
+  `honeysql-expr` is already compiled to Honey SQL, so DO NOT call [[->honeysql]] on it. 
+
+date-dbtype [driver]
+Return the name of the date type we convert to in this database. 
+
+datetime-diff [driver unit field-or-value field-or-value]
+Returns a HoneySQL form for calculating the datetime-diff for a given unit.
+   This method is used by implementations of `->honeysql` for the `:datetime-diff`
+   clause. It is recommended to implement this if you want to use the default SQL
+   implementation of `->honeysql` for the `:datetime-diff`, which includes
+   validation of argument types across all units. 
+
+float-dbtype [driver]
+Return the name of the floating point type we convert to in this database. 
+
+format-honeysql [driver honeysql-form]
+Compile `honeysql-form` to a `[sql & args]` vector. Prior to 0.51.0, this was a plain function, but was made a
+  multimethod in 0.51.0 to support drivers that need to always
+  specify [[metabase.driver/*compile-with-inline-parameters*]]. 
+
+honey-sql-version [driver]
+DEPRECATED: Prior to between 0.46.0 and 0.49.0, drivers could use either Honey SQL 1 or Honey SQL 2. In 0.49.0+, all
+  drivers must use Honey SQL 2. 
+
+inline-value [driver x]
+Return an inline value (as a raw SQL string) for an object `x`, e.g.
+
+    (inline-value :postgres (java-time.api/offset-date-time))
+    ;; => "timestamp with time zone '2024-07-01 23:35:18.407 +00:00'" 
+
+integer-dbtype [driver]
+Return the name of the integer type we convert to in this database. 
+
+join->honeysql [driver join]
+Compile a single MBQL `join` to HoneySQL. 
+
+join-source [driver join]
+Generate HoneySQL for a table or query to be joined. 
+
+json-query [driver identifier json-field]
+Reaches into a JSON field (that is, a field with a defined `:nfc-path`).
+
+  Lots of SQL DB's have denormalized JSON fields and they all have some sort of special syntax for dealing with
+  indexing into it. Implement the special syntax in this multimethod. 
+
+preprocess [driver inner-query]
+Do miscellaneous transformations to the MBQL before compiling the query. These changes are idempotent, so it is safe
+  to use this function in your own implementations of [[driver/mbql->native]], if you want to apply changes to the
+  same version of the query that we will ultimately be compiling. 
+
+quote-style [driver]
+Return the dialect that should be used by Honey SQL 2 when building a SQL statement. Defaults to `:ansi`, but other
+  valid options are `:mysql`, `:sqlserver`, `:oracle`, and `:h2` (added in
+  [[metabase.util.honey-sql-2]]; like `:ansi`, but uppercases the result). Check [[honey.sql/dialects]] for all
+  available dialects, or register a custom one with [[honey.sql/register-dialect!]].
+
+    (honey.sql/format ... :quoting (quote-style driver), :allow-dashed-names? true)
+
+  (The name of this method reflects Honey SQL 1 terminology, where "dialect" was called "quote style". To avoid
+  needless churn, I haven't changed it yet. -- Cam) 
+
+unix-timestamp->honeysql [driver seconds-or-milliseconds honeysql-expr]
+Return a HoneySQL form appropriate for converting a Unix timestamp integer field or value to an proper SQL Timestamp.
+  `seconds-or-milliseconds` refers to the resolution of the int in question and with be either `:seconds` or
+  `:milliseconds`.
+
+  There is a default implementation for `:milliseconds` the recursively calls with `:seconds` and `(expr / 1000)`. 
+
+metabase.driver.sql.util.unprepare
+unprepare-value [driver value]
+Deprecated in 0.51.0 and renamed to [[metabase.driver.sql.query-processor/inline-value]]. Replace method
+  implementations of `unprepare-value` with `inline-value`. 
+

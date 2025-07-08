@@ -1,0 +1,32 @@
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MB_LOG_LEVEL: TRACE
+      # Prevents license violation error from having too many connections
+      MB_JDBC_DATA_WAREHOUSE_MAX_CONNECTION_POOL_SIZE: 20 # Depends on license. Max connection pool size = 25 but dbeaver, terminal, etc all use it
+    volumes:
+      - ./metabase-data:/metabase.db
+      - ./iris-jdbc.metabase-driver.jar:/plugins/iris-jdbc.metabase-driver.jar:ro
+    healthcheck:
+      test: curl --fail -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  setup:
+    image: curlimages/curl:7.85.0
+    depends_on:
+      metabase:
+        condition: service_healthy
+    volumes:
+      - ./setup.sh:/setup.sh:ro
+    entrypoint: ["sh", "/setup.sh"]
+    # once it runs, it will exit—so no restart_policy needed
+
+volumes:
+  metabase-data:

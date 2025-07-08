@@ -1,0 +1,46 @@
+info:
+  name: Metabase IRIS JDBC Driver
+  version: 1.0.0-350-SNAPSHOT
+  description: Allows Metabase to connect to IRIS databases using the IRIS JDBC driver
+driver:
+  name: iris-jdbc
+  display-name: "InterSystems IRIS"
+  lazy-load: true
+  parent: sql-jdbc
+  connection-properties:
+    - merge:
+      - host
+      - required: true
+        helper-text: The hostname or IP address of your InterSystems IRIS instance
+    - merge:
+      - port
+      - required: true
+        display-name: Superserver Port
+        placeholder: 1972
+        helper-text: The Superserver port IRIS is listening on (default 1972). Found on the About page.
+    - merge:
+      - dbname
+      - name: namespace
+        placeholder: USER
+        display-name: Namespace
+        required: true
+        helper-text: The IRIS namespace you want to query
+    - merge:
+      - user
+      - required: true
+        placeholder: superuser
+        helper-text: The IRIS user Metabase will authenticate as.
+    - merge:
+      - password
+      - required: true
+        placeholder: sys
+        helper-text: The password for the above user.
+    - name: import-sys-tables
+      display-name: Import system tables
+      type: boolean
+      default: false
+init:
+  - step: load-namespace
+    namespace: metabase.driver.iris-jdbc
+  - step: register-jdbc-driver
+    class: com.intersystems.jdbc.IRISDriver
