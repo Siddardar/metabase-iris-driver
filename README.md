@@ -5,8 +5,7 @@ A custom driver for connecting Metabase to InterSystems IRIS databases. This dri
 ## Table of Contents
 - [Quick Start (Docker)](#quick-start-docker)
 - [Building Driver Locally](#building-driver-locally)
-- [Database Connection](#database-connection)
-- [Troubleshooting](#troubleshooting)
+- [Development Process](#development-process)
 - [Contributing](#contributing)
 - [License](#license)
 
