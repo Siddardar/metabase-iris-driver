@@ -135,6 +135,15 @@ This section outlines the steps one would need to take to build the driver local
    ls resources/modules/iris-jdbc.metabase-driver.jar
    ```
 
+6. **Use the driver**
+   ```bash
+   ~
+   ├── metabase.jar                   
+   ├── plugins
+       └── iris-jdbc.metabase-driver.jar   
+   ```
+   Place the driver in the `/plugins` folder (create the folder if you haven't) next to the metabase.jar file and restart your Metabase instance. Alternatively if you're using docker simply replace the existing driver file and restart the container.
+
 ## Development Process
 This section attempts to outline the development process I took in order to build this driver. Do note that this is not a exhaustive guide but rather an introductory alternative to the Metabase docs which may be confusing for someone who has never worked on a driver or Clojure before. Additionally, as Metabase is a product that is constantly changing, there is no guarentee that this process will continue to work in the future. 
 

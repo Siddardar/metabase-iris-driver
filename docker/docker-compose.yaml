@@ -28,5 +28,34 @@ services:
     entrypoint: ["sh", "/setup.sh"]
     # once it runs, it will exit—so no restart_policy needed
 
+  iris:
+    image: containers.intersystems.com/intersystems/irishealth-community-arm64:latest-preview
+    restart: unless-stopped
+    container_name: iris
+    ports:
+      - "52773:52773"  # Management Portal
+      - "1972:1972"    # SQL connection
+    environment:
+      - IRIS_PASSWORD=SYS
+      - IRIS_USERNAME=_SYSTEM
+    volumes:
+      - ./iris-data:/opt/irisapp/data
+    healthcheck:
+      test: ["CMD", "iris", "session", "iris", "-U", "%SYS", "##class(SYS.Process).CurrentDirectory()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  iris-setup:
+    image: curlimages/curl:7.85.0
+    depends_on:
+      iris:
+        condition: service_healthy
+    volumes:
+      - ./iris-setup.sh:/iris-setup.sh:ro
+    entrypoint: ["sh", "/iris-setup.sh"]
+    # once it runs, it will exit—so no restart_policy needed
+
 volumes:
   metabase-data:
+  iris-data:
