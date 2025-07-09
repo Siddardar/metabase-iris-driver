@@ -3,6 +3,7 @@
   (:require
    [clojure.java.jdbc :as jdbc]
    [clojure.string :as str]
+   [clojure.core :refer [get-method]]
    [honey.sql :as sql]
    [honey.sql.helpers :as sql.helpers]
    [java-time.api :as t]
@@ -11,6 +12,7 @@
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
    [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
    [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]
+   [metabase.driver.sql-jdbc.sync.interface :as sync.interface]
    [metabase.driver.sql.query-processor :as sql.qp]
    [metabase.driver.sql.util :as sql.u]
    [metabase.util :as u]
@@ -201,6 +203,39 @@
            schema
            table)])
 
+;; Stop importing system tables Ens*
+;; (defmethod sql-jdbc.sync/excluded-schemas :iris-jdbc [_]
+;;   #{"Ens"})
+
+;; 1) pull out the original :sql-jdbc handler
+(def ^:private sql-jdbc-default
+  (get-method sync.interface/filtered-syncable-schemas :sql-jdbc))
+  
+(defmethod sync.interface/filtered-syncable-schemas :iris-jdbc
+  [driver ^java.sql.Connection conn ^java.sql.DatabaseMetaData meta
+   ^String incl-pat ^String excl-pat]
+
+  ;; 1) Apply all of Metabase’s filtering + your extra exclusions into a vector
+  (let [filtered-schemas
+        (into []
+              (remove (fn [schema]
+                        (or
+                          (str/starts-with? schema "%")
+                          (str/starts-with? schema "EnsLib_")
+                          (str/starts-with? schema "Ens_")
+                          (str/starts-with? schema "EnsPortal")
+                          (= schema "INFORMATION_SCHEMA")
+                          (= schema "Ens"))))
+              (sql-jdbc-default driver conn meta incl-pat excl-pat))]
+
+    ;; 2) Log each schema that survived the filter
+    (doseq [schema filtered-schemas]
+      (log/infof "[IRIS-DRIVER] post-filtered schema → %s" schema))
+
+    ;; 3) Return the filtered list
+    filtered-schemas))
+
+    
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                          Other Functions                                                       |
 ;;; +----------------------------------------------------------------------------------------------------------------+
