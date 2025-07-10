@@ -178,16 +178,7 @@
   "Converts Metabase DB connection config into a JDBC connection using spec above"
   (jdbc-spec details-map))
 
-;; When Metabase first connects to a db, it runs a couple of sync methods
-;; to get the struture of all the tables in the db. The particular call that was failing
-;; was the describe-database call which does a "zero-row" probe query to get the columns
-;; of the db. This in SQL is: SELECT TRUE FROM "your_schema"."your_table" WHERE 1 <> 1 LIMIT 0;
-;; Which doesn't work in IRIS because of both the TRUE keyword and 1<>1. The next two methods
-;; fixes this issue by changing the SQL call of the underlying methods that describe-database calls 
-;; to SELECT 1 FROM "your_schema"."your_table" WHERE 1 = 0 LIMIT 0; which gives the same information
-
 (defmethod sql-jdbc.sync/fallback-metadata-query :iris-jdbc
-  ;; [driver db-name schema-name table-name]
   [_ _db-name schema table]
   ;; return a vector of one or more SQL strings to probe column metadata
   [(format "SELECT * FROM %s.%s WHERE 1=0 LIMIT 0"
@@ -215,7 +206,7 @@
   [driver ^java.sql.Connection conn ^java.sql.DatabaseMetaData meta
    ^String incl-pat ^String excl-pat]
 
-  ;; 1) Apply all of Metabase’s filtering + your extra exclusions into a vector
+  ;; Apply all of Metabase’s filtering + your extra exclusions into a vector
   (let [filtered-schemas
         (into []
               (remove (fn [schema]
@@ -228,11 +219,11 @@
                           (= schema "Ens"))))
               (sql-jdbc-default driver conn meta incl-pat excl-pat))]
 
-    ;; 2) Log each schema that survived the filter
+    ;; Log each schema that survived the filter
     (doseq [schema filtered-schemas]
-      (log/infof "[IRIS-DRIVER] post-filtered schema → %s" schema))
+      (log/infof "[IRIS-DRIVER] Remaining schema → %s" schema))
 
-    ;; 3) Return the filtered list
+    ;; Return the filtered list
     filtered-schemas))
 
     

@@ -35,10 +35,6 @@ driver:
       - required: true
         placeholder: sys
         helper-text: The password for the above user.
-    - name: import-sys-tables
-      display-name: Import system tables
-      type: boolean
-      default: false
 init:
   - step: load-namespace
     namespace: metabase.driver.iris-jdbc
