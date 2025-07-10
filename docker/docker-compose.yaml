@@ -33,8 +33,8 @@ services:
     restart: unless-stopped
     container_name: iris
     ports:
-      - "52773:52773"  # Management Portal
-      - "1972:1972"    # SQL connection
+      - "52773:52773"  # Web Server Port
+      - "1972:1972"    # Superserver Port
     environment:
       - IRIS_PASSWORD=SYS
       - IRIS_USERNAME=_SYSTEM

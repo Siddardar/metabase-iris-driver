@@ -11,55 +11,96 @@ A custom driver for connecting Metabase to InterSystems IRIS databases. This dri
 
 ## Quick Start (Docker)
 
-Assuming you have docker installed:
+This Quick Start guide is fully contained and comes with a Metabase instance, an IRIS instance and automatically injects the driver for you. If you have your own IRIS/Metabase instance that you want to test the driver on, simply remove the appropriate services in the `docker-compose.yaml` file (see [here](#components-and-configurations) for more details) or download the latest driver from the [releases page](https://github.com/Siddardar/metabase-iris-driver/releases) of this repo and use it accordingly. A guide to using community drivers in Metabase can be found [here](https://www.metabase.com/docs/latest/developers-guide/community-drivers). 
 
-1. Clone this repository and navigate to the docker folder
+For this guide, Docker as well as some basic understanding of IRIS is needed. 
+
+1. **Clone this repository and navigate to the docker folder**
    ```bash
    git clone <repository-url>
 
    cd metabase-iris-driver/docker
    ```
-2. Start with docker compose:
+2. **Start with docker compose**:
    ```bash
    docker compose up -d
    ```
 
-3. Navigate to `localhost:3000` 
+3. **The following containers will start spinning up**:
+   
+   - `metabase`: Contains the Metabase instance and listens at port 3000
+   - `setup`: Runs the `setup.sh` script once the metabase container is healthy which creates an admin account with the default credentials
+   - `iris`: Contains the IRIS instance and listens at ports 52773 (Web Server Port) and 1972 (Superserver Port)
+   - `iris-setup`: Runs the `iris-setup.sh` script once the `iris` container is healthy to change the default password to _sys_. 
 
-4. Login using the default credentials: 
+   Both the `setup` and `iris-setup` containers will spin down once the respective scripts have finished running. These containers are simply for convinience and do not impact the functionality of the driver in any way. 
+
+4. **Add some sample data in IRIS**. To keep things simple we are going to add one table with some data to the _USER_ namespace. Execute the following queries:
+   ```SQL
+   CREATE TABLE Data.Test (
+      name varchar(20), 
+      city varchar(3), 
+      age int
+   )
+   ```
+
+   ```SQL
+   INSERT INTO Data.Test (name, city, age) VALUES ('test', 'nyc', 23)
+   ```
+   <details>
+   <summary> Now you should have a table that looks something like this: </summary>
+   <br>
+
+   ![alt text](readme-imgs/image.png)
+
+   </details>
+
+   <br>
+
+3. **Navigate to Metabase** The default URL is `localhost:3000` 
+
+4. **Login using the default credentials**: 
    ```
    Username: admin@metabase.local
    Password: Metapass123
    ```
 
-5. In the side panel, click on `Add a database`
+5. **In the side panel, click on** `Add a database`
 
-6. Enter the following information:
+6. **Enter the following information**:
    ```bash
    Database type: Intersystems IRIS
-   Display name: IRIS-<namespace>    # Feel free to choose whatever you want
-   Host: host.docker.internal        # ONLY if the IRIS instance is running locally
-   Superserver Port: 51774           # To check navigate to the IRIS Management Portal > About
-   Namespace: NEHRDEMO               # The namespace you want to connect to
-   Username: superuser               # The user you want to connect as
+   Display name: IRIS                # Feel free to choose whatever you want
+   Host: iris                        # ONLY if the IRIS instance is running in a container called iris
+   Superserver Port: 1972            # To check navigate to the IRIS Management Portal > About
+   Namespace: USER                   # The namespace you want to connect to
+   Username: _SYSTEM                 # The user you want to connect as
    Password: sys                     # Password of the above user
 
-   # NOTE: The Import system tables option is a TODO and will be released in a later update
    ```
    And press `Save`
 
-7. Metabase will start syncing table data from IRIS and once it is done, navigate to `localhost:3000/browse/databases` and press on the _Display name_ entered to view the tables
+7. **Metabase will start syncing table data from IRIS**. Once it is done, navigate to `localhost:3000/browse/databases` and view the tables
+
+   <details>
+   <summary> You should see this: </summary>
+   <br>
+
+   ![alt text](readme-imgs/image-1.png)
+
+   </details>
+
 
 ### Components and Configurations
-This method consists of three components two of which are easily modifiable to your specific needs. 
+This method consists of three components which are easily modifiable to your specific needs. 
 
 1. `docker-compose.yaml`
 
-   This simple docker compose file defines two containers `metabase` and `setup`.
+   This simple docker compose file defines four containers `metabase`, `setup`, `iris` and `iris-setup`.
 
    - `metabase`
 
-      Initalises a Metabase instance
+      Initalises a Metabase instance with a volume defined at `./metabase-data` and injects the driver to the appropriate `/plugins` folder as required in the container. 
       
       Parameters:
 
@@ -68,14 +109,30 @@ This method consists of three components two of which are easily modifiable to y
 
       environment.MB_JDBC_DATA_WAREHOUSE_MAX_CONNECTION_POOL_SIZE # Defines the maximum pool size from Metabase to IRIS. Max: 25 (Depending on IRIS license)
 
-      volumes # Ensures data is kept beyond the lifetime of a container. NOTE: for the driver to work, it has to be placed in the /plugins folder in the container (this is handled by the 2nd volume instruction)
+      volumes # Ensures data is kept beyond the lifetime of a container and injects the driver. NOTE: for the driver to work, it has to be placed in the /plugins folder in the container (this is handled by the 2nd volume instruction)
 
       healthcheck # Runs a curl command in the container to ensure that the Metabase instance is running. The setup container is dependent on this healthcheck  
       ``` 
    
-   - `setup` (Optional)
+   - `setup` (Optional): See below for more information
 
-      Helps set up an admin account using the values found in the `setup.sh` file. This container is completely optional and is only here to make testing slighly easier by not having to create an account everytime. To remove it simply delete the entire `setup` container definition. 
+   - `iris`
+
+      Initalises an IRIS instance with a volume defined at `./iris-data`
+
+      Parameters:
+      ```bash
+      ports: <port of your host>:<port inside container> # Maps host port to container port. For IRIS you need to map both the Web Server Port and Superserver Port
+
+      environment # Username and password of the default admin user
+
+      volumes # Ensures IRIS data is kept beyond the lifetime of a container
+
+      healthcheck # Opens an iris terminal session and runs a pwd command to ensure the IRIS instance is running. The iris-setup container is dependent on this healthcheck
+      ```
+
+   - `iris-setup` (Optional): See below for more information
+
 
 2. `setup.sh`
 
@@ -89,6 +146,16 @@ This method consists of three components two of which are easily modifiable to y
    METABASE_PORT # Depends on the docker compose file
 
    # NOTE: You can choose to change these variables by editing this file or through the entrypoint variable in the setup container definition
+   ```
+
+3. `iris-setup.sh`
+
+   Similar to `setup.sh`, this bash script helps with the password change that is required when you log into IRIS for the first time. 
+
+   Parameters:
+   ```bash
+   URL           # Management Portal URL of the IRIS instance 
+   NEW_PASSWORD  
    ```
    
 ## Building Driver Locally
@@ -142,7 +209,7 @@ This section outlines the steps one would need to take to build the driver local
    ├── plugins
        └── iris-jdbc.metabase-driver.jar   
    ```
-   Place the driver in the `/plugins` folder (create the folder if you haven't) next to the metabase.jar file and restart your Metabase instance. Alternatively if you're using docker simply replace the existing driver file and restart the container.
+   Place the driver in the `/plugins` folder (create the folder if you haven't) next to the metabase.jar file and restart your Metabase instance. Alternatively if you're using following the quick guide and using docker, simply replace the existing driver file and restart the Metabase container.
 
 ## Development Process
 This section attempts to outline the development process I took in order to build this driver. Do note that this is not a exhaustive guide but rather an introductory alternative to the Metabase docs which may be confusing for someone who has never worked on a driver or Clojure before. Additionally, as Metabase is a product that is constantly changing, there is no guarentee that this process will continue to work in the future. 
@@ -180,7 +247,9 @@ iris-jdbc
 
 - `src/metabase/driver/iris_jdbc.clj`
 
-   This is the main Clojure code that makes up the driver. The main heavy lifting is done by the provided generic `sql-jdbc` driver and you would need to investigate to figure out which methods you would need to overwrite for your DB and use case. Start by importing the functions that you need before registering the driver with the DeviceManager. Following that you need to define the features that IRIS supports as well as define the type mappings from Java to Metabase. These Java types are what the IRIS JDBC returns in the form of a ResultSet. 
+   This is the main Clojure code that makes up the driver. Most of the heavy lifting is done by the provided generic `sql-jdbc` driver and you would need to investigate to figure out which methods you would need to overwrite for your DB and use case. Start by importing the functions that you need before registering the driver with the DeviceManager. Following that you need to define the features that IRIS supports as well as define the type mappings from Java to Metabase. These Java types are what the IRIS JDBC returns in the form of a ResultSet. 
+
+   For convinience I have included the docstrings of all the available methods in the `driver-docs.txt` file. More information can be found [here](https://www.metabase.com/docs/latest/developers-guide/drivers/multimethods#listing-the-available-driver-multimethods) and on the [Metabase Github repository](https://github.com/metabase/metabase/tree/master/src/metabase/driver/sql_jdbc).  
    
    #### Must implement mutimethods 
    For any driver, there are two main methods that you must define: `jdbc-spec` which defines how a connection string to your database is constructed from the inputs given by the user (defined by `manifest-plugin.yaml`) and `sql-jdbc.conn/connection-details->spec` which transforms the generic Metabase DB definition into the parameters for `clojure.java.jdbc` which is needed to open a connection. Technically since `jdbc-spec` is just a helper method, you could write all the logic in `sql-jdbc.conn/connection-details->spec` but doing this way seems cleaner. 
@@ -193,6 +262,26 @@ iris-jdbc
 
    In general unless you have a very good understanding of the underlying database and the functions Metabase calls, it's nearly impossible to know what methods you would need to override. One way is to simply implement the barebones version of a driver and monitor the logs for the function that is not working. Slowly overriding functions from there will eventually lead you to having a functioning driver with the least lines of code. 
 
+   #### Removing system schemas and tables
+   Metabase simply syncs with all available schemas and tables it can find my default. To prevent Metabase from doing this, one of two methods can be used depending on the number of system tables your database contains. 
+   
+   1. Override `sql-jdbc.sync/excluded-schemas` (Easy)
+
+      The method expects a set of strings as a return value and as such you need to simply provide a set of set of schema strings that you want to exclude. This is useful if the number of system tables being imported is small and remain constant across database instances. 
+      ```Clojure
+      (defmethod sql-jdbc.sync/excluded-schemas :iris-jdbc [_]
+         #{"Ens"})
+      ```
+
+      NOTE: Regex cannot be used in this method. Metabase simply does an exact string matching to decide if a schema is excluded or not. 
+
+   2. Override `sync.interface/filtered-syncable-schemas` (My method)
+
+      Overriding this function allows you to dynamically remove schemas by iterating through the all the schemas Metabase fetches and removing schemas that start with or are equal to a string. This prevents the issue of maintaining a large list of excluded schemas which is especially useful if all the system schemas begin with a certain prefix as it is in the case of IRIS. 
+
+      The full implementation is in the driver code but the main idea is this method, by default, fetches all the available schemas, excludes the schemas in `sql-jdbc.sync/excluded-schemas` and returns a set of schemas. Since we need to use the default implementation of this function to get a set of all schemas, we first need to save the original implementation in a seperate function before overriding this function. This allows us to call the original implementation in our overriden function giving us the full list of schemas that we can then filter. 
+
+
    #### Other definitions
 
    There are also DateTime and miscellenious function definitions in the driver. Although I believe that they aren't strictly necessary for importing data into Metabase, I simply followed other jdbc drivers as they had implemented them. 
@@ -200,13 +289,7 @@ iris-jdbc
 
 ## Contributing
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+Contributions are welcome! Take a look at the issues tracker for ideas!
 
 ### Development Guidelines
 
@@ -221,4 +304,4 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ---
 
-**Note**: This driver is not officially supported by InterSystems or Metabase. Use in production environments should be thoroughly tested.
+**Note**: This driver is not officially supported by Metabase yet and as such will not work on Metabase Cloud. 
