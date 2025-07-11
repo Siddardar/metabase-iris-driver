@@ -11,6 +11,8 @@ A custom driver for connecting Metabase to InterSystems IRIS databases. This dri
 
 ## Quick Start (Docker)
 
+**NOTE:** If you are following this guide on a Windows machine, change the iris image to `containers.intersystems.com/intersystems/irishealth-community:latest-preview`
+
 This Quick Start guide is fully contained and comes with a Metabase instance, an IRIS instance and automatically injects the driver for you. If you have your own IRIS/Metabase instance that you want to test the driver on, simply remove the appropriate services in the `docker-compose.yaml` file (see [here](#components-and-configurations) for more details) or download the latest driver from the [releases page](https://github.com/Siddardar/metabase-iris-driver/releases) of this repo and use it accordingly. A guide to using community drivers in Metabase can be found [here](https://www.metabase.com/docs/latest/developers-guide/community-drivers). 
 
 For this guide, Docker as well as some basic understanding of IRIS is needed. 
