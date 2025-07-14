@@ -35,6 +35,8 @@ driver:
       - required: true
         placeholder: sys
         helper-text: The password for the above user.
+    - advanced-options-start
+    - default-advanced-options
 init:
   - step: load-namespace
     namespace: metabase.driver.iris-jdbc
