@@ -2,6 +2,8 @@
 
 A custom driver for connecting Metabase to InterSystems IRIS databases. This driver enables Metabase to query, analyze, and visualize data from IRIS databases using the native IRIS JDBC driver.
 
+Here's a video demo: https://youtu.be/yoaQBg331M4
+
 ## Table of Contents
 - [Quick Start (Docker)](#quick-start-docker)
 - [Building Driver Locally](#building-driver-locally)
